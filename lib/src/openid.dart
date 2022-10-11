@@ -397,14 +397,18 @@ class Flow {
   Flow.authorizationCodeWithPKCE(Client client, {String? state})
       : this._(FlowType.proofKeyForCodeExchange, 'code', client, state: state);
 
-  Flow.implicit(Client client, {String? state})
-      : this._(
-            FlowType.implicit,
-            ['token id_token', 'id_token token', 'id_token', 'token']
-                .firstWhere((v) =>
-                    client.issuer.metadata.responseTypesSupported.contains(v)),
-            client,
-            state: state);
+  Flow.implicit(
+    Client client, {
+    String? state,
+    Map<String, String>? additionalParameters,
+  }) : this._(
+          FlowType.implicit,
+          ['token id_token', 'id_token token', 'id_token', 'token'].firstWhere(
+              (v) => client.issuer.metadata.responseTypesSupported.contains(v)),
+          client,
+          state: state,
+          additionalParameters: additionalParameters,
+        );
 
   Flow.jwtBearer(Client client) : this._(FlowType.jwtBearer, null, client);
 
