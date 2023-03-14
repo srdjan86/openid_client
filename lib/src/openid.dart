@@ -295,10 +295,20 @@ class Credential {
         },
         client: client.httpClient);
 
+    updateToken(json);
+    return _token;
+  }
+
+  /// Updates the token with the given [json] and notifies all listeners
+  /// of the new token.
+  ///
+  /// This method is used internally by [getTokenResponse], but can also be
+  /// used to update the token manually, e.g. when no refresh token is available
+  /// and the token is updated by other means.
+  void updateToken(Map<String, dynamic> json) {
     _token =
         TokenResponse.fromJson({'refresh_token': _token.refreshToken, ...json});
     _onTokenChanged.add(_token);
-    return _token;
   }
 
   Credential.fromJson(Map<String, dynamic> json, {http.Client? httpClient})
@@ -335,7 +345,8 @@ enum FlowType {
   implicit,
   authorizationCode,
   proofKeyForCodeExchange,
-  jwtBearer
+  jwtBearer,
+  password,
 }
 
 class Flow {
@@ -355,6 +366,7 @@ class Flow {
 
   Flow._(this.type, this.responseType, this.client,
       {String? state,
+      String? codeVerifier,
       Map<String, String>? additionalParameters,
       Uri? redirectUri,
       List<String> scopes = const ['openid', 'profile', 'email']})
@@ -365,11 +377,10 @@ class Flow {
     for (var s in scopes) {
       if (supportedScopes.contains(s)) {
         this.scopes.add(s);
-        break;
       }
     }
 
-    var verifier = _randomString(50);
+    var verifier = codeVerifier ?? _randomString(50);
     var challenge = base64Url
         .encode(SHA256Digest().process(Uint8List.fromList(verifier.codeUnits)))
         .replaceAll('=', '');
@@ -378,6 +389,20 @@ class Flow {
       'code_challenge': challenge
     };
   }
+
+  /// Creates a new [Flow] for the password flow.
+  ///
+  /// This flow can be used for active authentication by highly-trusted
+  /// applications. Call [Flow.loginWithPassword] to authenticate a user with
+  /// their username and password.
+  Flow.password(Client client,
+      {List<String> scopes = const ['openid', 'profile', 'email']})
+      : this._(
+          FlowType.password,
+          '',
+          client,
+          scopes: scopes,
+        );
 
   Flow.authorizationCode(Client client,
       {String? state,
@@ -394,21 +419,46 @@ class Flow {
             scopes: scopes,
             redirectUri: redirectUri);
 
-  Flow.authorizationCodeWithPKCE(Client client, {String? state})
-      : this._(FlowType.proofKeyForCodeExchange, 'code', client, state: state);
-
-  Flow.implicit(
+  Flow.authorizationCodeWithPKCE(
     Client client, {
     String? state,
-    Map<String, String>? additionalParameters,
+    String? prompt,
+    List<String> scopes = const ['openid', 'profile', 'email'],
+    String? codeVerifier,
   }) : this._(
-          FlowType.implicit,
-          ['token id_token', 'id_token token', 'id_token', 'token'].firstWhere(
-              (v) => client.issuer.metadata.responseTypesSupported.contains(v)),
+          FlowType.proofKeyForCodeExchange,
+          'code',
           client,
           state: state,
-          additionalParameters: additionalParameters,
+          scopes: scopes,
+          codeVerifier: codeVerifier,
+          additionalParameters: {
+            if (prompt != null) 'prompt': prompt,
+          },
         );
+
+  Flow.implicit(Client client, {String? state, String? device, String? prompt})
+      : this._(
+            FlowType.implicit,
+            [
+              'token id_token',
+              'id_token token',
+              'id_token',
+              'token',
+            ].firstWhere((v) =>
+                client.issuer.metadata.responseTypesSupported.contains(v)),
+            client,
+            state: state,
+            scopes: [
+              'openid',
+              'profile',
+              'email',
+              if (device != null) 'offline_access'
+            ],
+            additionalParameters: {
+              if (device != null) 'device': device,
+              if (prompt != null) 'prompt': prompt,
+            });
 
   Flow.jwtBearer(Client client) : this._(FlowType.jwtBearer, null, client);
 
@@ -488,6 +538,26 @@ class Flow {
     return TokenResponse.fromJson(json);
   }
 
+  /// Login with username and password
+  ///
+  /// Only allowed for [Flow.password] flows.
+  Future<Credential> loginWithPassword(
+      {required String username, required String password}) async {
+    if (type != FlowType.password) {
+      throw UnsupportedError('Flow is not password');
+    }
+    var json = await http.post(client.issuer.tokenEndpoint,
+        body: {
+          'grant_type': 'password',
+          'username': username,
+          'password': password,
+          'scope': scopes.join(' '),
+          'client_id': client.clientId,
+        },
+        client: client.httpClient);
+    return Credential._(client, TokenResponse.fromJson(json), null);
+  }
+
   Future<Credential> callback(Map<String, String> response) async {
     if (response['state'] != state) {
       throw ArgumentError('State does not match');
@@ -512,7 +582,8 @@ class Flow {
 String _randomString(int length) {
   var r = Random.secure();
   var chars = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  return Iterable.generate(50, (_) => chars[r.nextInt(chars.length)]).join();
+  return Iterable.generate(length, (_) => chars[r.nextInt(chars.length)])
+      .join();
 }
 
 /// An exception thrown when a response is received in the openid error format.
