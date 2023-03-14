@@ -437,8 +437,13 @@ class Flow {
           },
         );
 
-  Flow.implicit(Client client, {String? state, String? device, String? prompt})
-      : this._(
+  Flow.implicit(
+    Client client, {
+    String? state,
+    String? device,
+    String? prompt,
+    Map<String, String>? additionalParameters,
+  }) : this._(
             FlowType.implicit,
             [
               'token id_token',
@@ -458,6 +463,7 @@ class Flow {
             additionalParameters: {
               if (device != null) 'device': device,
               if (prompt != null) 'prompt': prompt,
+              if (additionalParameters != null) ...additionalParameters,
             });
 
   Flow.jwtBearer(Client client) : this._(FlowType.jwtBearer, null, client);
